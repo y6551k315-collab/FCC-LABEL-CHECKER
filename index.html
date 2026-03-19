@@ -3,43 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FCC 標籤智慧比對系統 v3.0</title>
+    <title>FCC 標籤比對系統 (高相容版)</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         :root { --primary-color: #007bff; --success-color: #28a745; --fail-color: #dc3545; }
         body { font-family: -apple-system, sans-serif; text-align: center; padding: 0; margin: 0; background-color: #f0f2f5; color: #333; }
-        
-        /* 相機區域固定在上方 */
-        #camera-container { position: relative; width: 100%; max-width: 500px; margin: 0 auto; background: #000; overflow: hidden; border-bottom: 3px solid #ddd; }
+        #camera-container { position: relative; width: 100%; max-width: 500px; margin: 0 auto; background: #000; overflow: hidden; border-bottom: 3px solid #ddd; aspect-ratio: 1/1; }
         #reader { width: 100%; height: 100%; }
-
-        /* 控制區域 */
         .control-panel { padding: 15px; max-width: 470px; margin: 0 auto; text-align: left; }
         .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 15px; }
         .card-title { font-weight: bold; font-size: 14px; color: #666; margin-bottom: 8px; display: block; }
-        
         input[type="text"] { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
-        
-        /* 縮放滑桿樣式 */
         .zoom-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-        input[type="range"] { flex-grow: 1; height: 8px; border-radius: 5px; background: #ddd; outline: none; }
-
-        /* 結果顯示區 */
         #resultDisplay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; justify-content: center; align-items: center; z-index: 1000; padding: 20px; box-sizing: border-box; }
-        .result-content { background: white; width: 100%; max-width: 400px; border-radius: 16px; padding: 30px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+        .result-content { background: white; width: 100%; max-width: 400px; border-radius: 16px; padding: 30px; text-align: center; }
         .status-icon { font-size: 64px; margin-bottom: 15px; }
         .status-text { font-size: 32px; font-weight: bold; margin-bottom: 20px; }
         .pass-text { color: var(--success-color); }
         .fail-text { color: var(--fail-color); }
-        .code-detail { font-size: 12px; color: #777; word-break: break-all; background: #f8f9fa; padding: 10px; border-radius: 8px; margin-bottom: 25px; max-height: 60px; overflow-y: auto; }
-        
+        .code-detail { font-size: 12px; color: #777; word-break: break-all; background: #f8f9fa; padding: 10px; border-radius: 8px; margin-bottom: 25px; max-height: 80px; overflow-y: auto; }
         .action-btn { background: var(--primary-color); color: white; border: none; padding: 15px; width: 100%; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; }
-        .action-btn:active { opacity: 0.9; }
-
-        /* 手機版適配 */
-        @media (max-width: 600px) {
-            #camera-container { aspect-ratio: 1/1; } /* 手機上強制定為正方形 */
-        }
     </style>
 </head>
 <body>
@@ -49,18 +32,18 @@
     </div>
 
     <div class="control-panel">
-        <div class="card">
+        <div class="card" id="zoomCard" style="display:none;">
             <span class="card-title">🔍 鏡頭縮放 (Zoom)</span>
             <div class="zoom-controls">
                 <span>1x</span>
-                <input type="range" id="zoomSlider" min="1" max="4" step="0.1" value="1.5">
-                <span id="zoomVal">1.5</span>x
+                <input type="range" id="zoomSlider" min="1" max="4" step="0.1" value="1">
+                <span id="zoomVal">1</span>x
             </div>
         </div>
 
         <div class="card">
             <span class="card-title">📋 比對範本 (只要包含即 PASS)</span>
-            <input type="text" id="templateInput" placeholder="請掃描或輸入正確範本..." value="]d2010818775667890111260319211103266">
+            <input type="text" id="templateInput" value="]d2010818775667890111260319211103266">
         </div>
     </div>
 
@@ -68,125 +51,80 @@
         <div class="result-content">
             <div id="statusIcon" class="status-icon">✅</div>
             <div id="statusText" class="status-text pass-text">判定中...</div>
-            <div class="code-detail">原始條碼：<br><span id="scannedText"></span></div>
+            <div class="code-detail">完整條碼：<br><span id="scannedText"></span></div>
             <button class="action-btn" onclick="resetScanner()">繼續掃描下一個</button>
         </div>
     </div>
 
     <script>
         const html5QrCode = new Html5Qrcode("reader");
-        let cameraTrack; // 儲存當前相機軌道
-        let currentZoom = 1.5; // 預設放大倍率
+        let cameraTrack;
 
         const config = { 
             fps: 20, 
-            qrbox: function(viewfinderWidth, viewfinderHeight) {
-                // 動態計算掃描框大小，佔視窗的 60%
-                const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-                const size = Math.floor(minEdge * 0.6);
-                return { width: size, height: size };
-            },
-            aspectRatio: 1.0 // 強制正方形視窗，更適合掃 DataMatrix
+            qrbox: (w, h) => { return { width: Math.min(w, h) * 0.7, height: Math.min(w, h) * 0.7 }; }
         };
 
-        // 啟動相機並嘗試設定自動對焦與縮放
         function startCamera() {
-            // 強制要求後置鏡頭、連續自動對焦
-            const constraints = {
-                facingMode: "environment",
-                focusMode: "continuous" // 這行指令要求瀏覽器進行自動對焦
-            };
-
-            html5QrCode.start(constraints, config, onScanSuccess)
+            // 使用最基礎的參數啟動，確保相容性
+            html5QrCode.start(
+                { facingMode: "environment" }, 
+                config, 
+                onScanSuccess
+            )
             .then(() => {
-                cameraTrack = html5QrCode.getRunningTrack();
-                setupZoomControl(cameraTrack);
+                // 成功開啟相機後，再嘗試探測硬體能力 (Zoom)
+                try {
+                    cameraTrack = html5QrCode.getRunningTrack();
+                    const capabilities = cameraTrack.getCapabilities();
+                    if (capabilities.zoom) {
+                        document.getElementById('zoomCard').style.display = 'block';
+                        setupZoom(cameraTrack, capabilities);
+                    }
+                } catch (e) { console.log("不支援進階縮放控制"); }
             })
             .catch(err => {
-                console.error("相機啟動失敗:", err);
-                alert("相機啟動失敗。請確認：\n1. 使用 HTTPS 連線。\n2. 已授權相機權限。");
+                alert("相機啟動失敗。請確認：\n1. 網址開頭為 HTTPS\n2. 已開啟權限\n3. 無其他程式佔用相機");
             });
         }
 
-        // 初始化縮放控制
-        function setupZoomControl(track) {
+        function setupZoom(track, capabilities) {
             const slider = document.getElementById('zoomSlider');
             const valText = document.getElementById('zoomVal');
+            slider.min = capabilities.zoom.min;
+            slider.max = capabilities.zoom.max;
             
-            try {
-                const capabilities = track.getCapabilities();
-                
-                // 如果硬體不支援縮放，隱藏控制項
-                if (!capabilities.zoom) {
-                    slider.closest('.card').style.display = 'none';
-                    return;
-                }
-
-                // 設定滑桿範圍
-                slider.min = capabilities.zoom.min;
-                slider.max = capabilities.zoom.max;
-                slider.value = currentZoom; // 套用預設值
-                valText.innerText = currentZoom;
-
-                // 初始套用預設放大
-                applyZoom(track, currentZoom);
-
-                // 監聽滑桿變動
-                slider.addEventListener('input', (e) => {
-                    const value = parseFloat(e.target.value);
-                    valText.innerText = value.toFixed(1);
-                    applyZoom(track, value);
-                });
-
-            } catch (e) {
-                console.warn("無法取得相機能力資訊 (iOS 限制較多)");
-            }
+            slider.addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value);
+                valText.innerText = val.toFixed(1);
+                track.applyConstraints({ advanced: [{ zoom: val }] });
+            });
         }
 
-        // 套用縮放數值
-        function applyZoom(track, value) {
-            if (track && track.readyState === 'live') {
-                track.applyConstraints({
-                    advanced: [{ zoom: value }]
-                });
-            }
-        }
-
-        // 掃描成功處理邏輯
         function onScanSuccess(decodedText) {
-            html5QrCode.pause(); // 暫停掃描
-            
+            html5QrCode.pause();
             const template = document.getElementById('templateInput').value.trim();
-            const isPass = decodedText.includes(template); // 包含比對
+            const isPass = decodedText.includes(template);
 
-            // 更新 UI
             document.getElementById('scannedText').innerText = decodedText;
-            const display = document.getElementById('resultDisplay');
-            const icon = document.getElementById('statusIcon');
-            const text = document.getElementById('statusText');
+            document.getElementById('resultDisplay').style.display = "flex";
 
             if (isPass) {
-                icon.innerText = "✅";
-                text.innerText = "PASS (正確)";
-                text.className = "status-text pass-text";
+                document.getElementById('statusIcon').innerText = "✅";
+                document.getElementById('statusText').innerText = "PASS (正確)";
+                document.getElementById('statusText').className = "status-text pass-text";
             } else {
-                icon.innerText = "❌";
-                text.innerText = "FAIL (錯誤)";
-                text.className = "status-text fail-text";
-                // 錯誤時發出簡短振動 (Android 支援)
-                if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                document.getElementById('statusIcon').innerText = "❌";
+                document.getElementById('statusText').innerText = "FAIL (錯誤)";
+                document.getElementById('statusText').className = "status-text fail-text";
             }
-
-            display.style.display = "flex"; // 顯示全螢幕彈窗
         }
 
-        // 重置掃描器
         function resetScanner() {
             document.getElementById('resultDisplay').style.display = "none";
-            html5QrCode.resume(); // 恢復掃描
+            html5QrCode.resume();
         }
 
-        // 頁面載入後自動啟動
         window.addEventListener('load', startCamera);
     </script>
 </body>
